@@ -9,8 +9,11 @@ on:
         default: "https://github.com/ankit-chaubey/ferogram/commit/124ef3cc212a7ee1c153c8c5f8e94c10e2d20693"
 
 jobs:
-  compile:
+  parse:
     runs-on: ubuntu-latest
+    outputs:
+      repo: ${{ steps.parse.outputs.repo }}
+      sha: ${{ steps.parse.outputs.sha }}
     steps:
       - name: Parse commit URL
         id: parse
@@ -23,89 +26,404 @@ jobs:
           echo "Parsed repo: $repo"
           echo "Parsed sha: $sha"
 
-      - name: Checkout commit
-        uses: actions/checkout@v4
+  clippy:
+    needs: parse
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
         with:
-          repository: ${{ steps.parse.outputs.repo }}
-          ref: ${{ steps.parse.outputs.sha }}
-          fetch-depth: 0
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+          repository: ${{ needs.parse.outputs.repo }}
+          ref: ${{ needs.parse.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy, rustfmt
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      - name: Init log
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ferogram-cache
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Run clippy
         run: |
-          echo "Build log for ${{ steps.parse.outputs.repo }} @ ${{ steps.parse.outputs.sha }}" > build.log
+          set +e
+          {
+            echo "### cargo clippy --workspace --all-features ###"
+            cargo clippy --workspace --all-features 2>&1
+            code=${PIPESTATUS[0]:-$?}
+            echo "exit code: $code"
+          } | tee build.log
+          exit 0
+      - name: Zip log
+        run: zip clippy.log.zip build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: log-clippy
+          path: build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: log-clippy-zip
+          path: clippy.log.zip
+
+  test:
+    needs: parse
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ needs.parse.outputs.repo }}
+          ref: ${{ needs.parse.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ferogram-cache
+          save-if: false
+      - name: Run tests
+        run: |
+          set +e
+          {
+            echo "### cargo test --workspace --all-features ###"
+            cargo test --workspace --all-features 2>&1
+            code=${PIPESTATUS[0]:-$?}
+            echo "exit code: $code"
+          } | tee build.log
+          exit 0
+      - name: Zip log
+        run: zip test.log.zip build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: log-test
+          path: build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: log-test-zip
+          path: test.log.zip
+
+  build-release:
+    needs: parse
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ needs.parse.outputs.repo }}
+          ref: ${{ needs.parse.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ferogram-cache
+          save-if: false
+      - name: Build release
+        run: |
+          set +e
+          {
+            echo "### cargo build --workspace --release --all-features ###"
+            cargo build --workspace --release --all-features 2>&1
+            code=${PIPESTATUS[0]:-$?}
+            echo "exit code: $code"
+          } | tee build.log
+          exit 0
+      - name: Zip log
+        run: zip build-release.log.zip build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: log-build-release
+          path: build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: log-build-release-zip
+          path: build-release.log.zip
+
+  build-debug:
+    needs: parse
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ needs.parse.outputs.repo }}
+          ref: ${{ needs.parse.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ferogram-cache
+          save-if: false
+      - name: Build debug
+        run: |
+          set +e
+          {
+            echo "### cargo build --workspace --all-features ###"
+            cargo build --workspace --all-features 2>&1
+            code=${PIPESTATUS[0]:-$?}
+            echo "exit code: $code"
+          } | tee build.log
+          exit 0
+      - name: Zip log
+        run: zip build-debug.log.zip build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: log-build-debug
+          path: build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: log-build-debug-zip
+          path: build-debug.log.zip
+
+  doc:
+    needs: parse
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ needs.parse.outputs.repo }}
+          ref: ${{ needs.parse.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ferogram-cache
+          save-if: false
+      - name: Build docs
+        run: |
+          set +e
+          {
+            echo "### cargo doc --workspace --all-features --no-deps ###"
+            cargo doc --workspace --all-features --no-deps 2>&1
+            code=${PIPESTATUS[0]:-$?}
+            echo "exit code: $code"
+          } | tee build.log
+          exit 0
+      - name: Zip log
+        run: zip doc.log.zip build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: log-doc
+          path: build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: log-doc-zip
+          path: doc.log.zip
+
+  publish-dry-run:
+    needs: parse
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ needs.parse.outputs.repo }}
+          ref: ${{ needs.parse.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ferogram-cache
+          save-if: false
+      - name: Publish dry run
+        run: |
+          set +e
+          {
+            echo "### cargo publish --dry-run --allow-dirty ###"
+            cargo publish --dry-run --allow-dirty 2>&1
+            code=${PIPESTATUS[0]:-$?}
+            echo "exit code: $code"
+          } | tee build.log
+          exit 0
+      - name: Zip log
+        run: zip publish.log.zip build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: log-publish
+          path: build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: log-publish-zip
+          path: publish.log.zip
+
+  tree-duplicates:
+    needs: parse
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ needs.parse.outputs.repo }}
+          ref: ${{ needs.parse.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ferogram-cache
+          save-if: false
+      - name: Tree duplicates
+        run: |
+          set +e
+          {
+            echo "### cargo tree --workspace --all-features --duplicates ###"
+            cargo tree --workspace --all-features --duplicates 2>&1
+            code=${PIPESTATUS[0]:-$?}
+            echo "exit code: $code"
+          } | tee build.log
+          exit 0
+      - name: Zip log
+        run: zip tree-duplicates.log.zip build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: log-tree-duplicates
+          path: build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: log-tree-duplicates-zip
+          path: tree-duplicates.log.zip
+
+  tree-features:
+    needs: parse
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ needs.parse.outputs.repo }}
+          ref: ${{ needs.parse.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ferogram-cache
+          save-if: false
+      - name: Tree features
+        run: |
+          set +e
+          {
+            echo "### cargo tree --workspace --all-features -e features ###"
+            cargo tree --workspace --all-features -e features 2>&1
+            code=${PIPESTATUS[0]:-$?}
+            echo "exit code: $code"
+          } | tee build.log
+          exit 0
+      - name: Zip log
+        run: zip tree-features.log.zip build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: log-tree-features
+          path: build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: log-tree-features-zip
+          path: tree-features.log.zip
+
+  clippy-dead-code:
+    needs: parse
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ needs.parse.outputs.repo }}
+          ref: ${{ needs.parse.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ferogram-cache
+          save-if: false
+      - name: Clippy dead code
+        run: |
+          set +e
+          {
+            echo "### cargo clippy --workspace --all-features -- -W dead_code ###"
+            cargo clippy --workspace --all-features -- -W dead_code 2>&1
+            code=${PIPESTATUS[0]:-$?}
+            echo "exit code: $code"
+          } | tee build.log
+          exit 0
+      - name: Zip log
+        run: zip clippy-dead-code.log.zip build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: log-clippy-dead-code
+          path: build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: log-clippy-dead-code-zip
+          path: clippy-dead-code.log.zip
+
+  machete:
+    needs: parse
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ needs.parse.outputs.repo }}
+          ref: ${{ needs.parse.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-machete
+      - name: Machete
+        run: |
+          set +e
+          {
+            echo "### cargo machete --with-metadata ###"
+            cargo machete --with-metadata 2>&1
+            code=${PIPESTATUS[0]:-$?}
+            echo "exit code: $code"
+          } | tee build.log
+          exit 0
+      - name: Zip log
+        run: zip machete.log.zip build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: log-machete
+          path: build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: log-machete-zip
+          path: machete.log.zip
+
+  merge:
+    needs:
+      [
+        parse,
+        clippy,
+        test,
+        build-release,
+        build-debug,
+        doc,
+        publish-dry-run,
+        tree-duplicates,
+        tree-features,
+        clippy-dead-code,
+        machete,
+      ]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all logs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: log-*
+          path: logs
+
+      - name: Merge logs
+        run: |
+          echo "Build log for ${{ needs.parse.outputs.repo }} @ ${{ needs.parse.outputs.sha }}" > build.log
           echo "Started: $(date -u)" >> build.log
           echo "======================================" >> build.log
-
-      - name: Clippy
-        continue-on-error: true
-        run: |
-          echo "" >> build.log
-          echo "### cargo clippy --workspace --all-features ###" >> build.log
-          cargo clippy --workspace --all-features >> build.log 2>&1
-          echo "exit code: $?" >> build.log
-
-      - name: Test
-        continue-on-error: true
-        run: |
-          echo "" >> build.log
-          echo "### cargo test --workspace --all-features ###" >> build.log
-          cargo test --workspace --all-features >> build.log 2>&1
-          echo "exit code: $?" >> build.log
-
-      - name: Build release
-        continue-on-error: true
-        run: |
-          echo "" >> build.log
-          echo "### cargo build --workspace --release ###" >> build.log
-          cargo build --workspace --release >> build.log 2>&1
-          echo "exit code: $?" >> build.log
-
-      - name: Build debug
-        continue-on-error: true
-        run: |
-          echo "" >> build.log
-          echo "### cargo build --workspace ###" >> build.log
-          cargo build --workspace >> build.log 2>&1
-          echo "exit code: $?" >> build.log
-
-      - name: Doc
-        continue-on-error: true
-        run: |
-          echo "" >> build.log
-          echo "### cargo doc --workspace ###" >> build.log
-          cargo doc --workspace --no-deps >> build.log 2>&1
-          echo "exit code: $?" >> build.log
-
-      - name: Publish dry run
-        continue-on-error: true
-        run: |
-          echo "" >> build.log
-          echo "### cargo publish --dry-run ###" >> build.log
-          cargo publish --dry-run --allow-dirty >> build.log 2>&1
-          echo "exit code: $?" >> build.log
-
-      - name: Finish log
-        if: always()
-        run: |
+          for name in clippy test build-release build-debug doc publish tree-duplicates tree-features clippy-dead-code machete; do
+            echo "" >> build.log
+            if [ -f "logs/log-$name/build.log" ]; then
+              cat "logs/log-$name/build.log" >> build.log
+            else
+              echo "### $name: no log produced (job did not run) ###" >> build.log
+            fi
+          done
           echo "" >> build.log
           echo "======================================" >> build.log
           echo "Finished: $(date -u)" >> build.log
 
-      - name: Zip log
-        if: always()
+      - name: Zip merged log
         run: zip build-log.zip build.log
 
-      - name: Upload log
-        if: always()
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: build-log
           path: build-log.zip
