@@ -1,0 +1,198 @@
+name: Compile (feature matrix)
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_url:
+        description: "Commit URL, e.g. https://github.com/owner/repo/commit/sha"
+        required: true
+        default: "https://github.com/ankit-chaubey/ferogram/commit/124ef3cc212a7ee1c153c8c5f8e94c10e2d20693"
+
+jobs:
+  parse:
+    runs-on: ubuntu-latest
+    outputs:
+      repo: ${{ steps.parse.outputs.repo }}
+      sha: ${{ steps.parse.outputs.sha }}
+    steps:
+      - name: Parse commit URL
+        id: parse
+        run: |
+          url="${{ github.event.inputs.commit_url }}"
+          repo=$(echo "$url" | sed -E 's#https://github.com/([^/]+/[^/]+)/commit/.*#\1#')
+          sha=$(echo "$url" | sed -E 's#.*/commit/##')
+          echo "repo=$repo" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "Parsed repo: $repo"
+          echo "Parsed sha: $sha"
+
+  # Tests every feature in the workspace one at a time (plus default and
+  # no-default-features), so a break caused by a single feature doesn't
+  # hide behind --all-features and doesn't get masked by an unrelated
+  # crate failing earlier in the build.
+  each-feature:
+    needs: parse
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ needs.parse.outputs.repo }}
+          ref: ${{ needs.parse.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-hack
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ferogram-cache-hack
+          save-if: false
+      - name: cargo hack test --each-feature
+        run: |
+          set +e
+          {
+            echo "### cargo hack test --workspace --each-feature ###"
+            cargo hack test --workspace --each-feature 2>&1
+            code=${PIPESTATUS[0]:-$?}
+            echo "exit code: $code"
+          } | tee build.log
+          exit 0
+      - name: Zip log
+        run: zip each-feature.log.zip build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: log-each-feature
+          path: build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: log-each-feature-zip
+          path: each-feature.log.zip
+
+  # Tests every combination (powerset) of ferogram-session's own optional
+  # features. This crate is the one carrying both rusqlite ("sqlite-session")
+  # and libsql ("libsql-session"), each bundling its own copy of sqlite3 -
+  # a powerset run enumerates every pairing explicitly, so "sqlite-session
+  # alone: ok", "libsql-session alone: ok", "both together: fails" all show
+  # up as separate, individually attributable lines instead of one opaque
+  # --all-features failure.
+  feature-powerset-session:
+    needs: parse
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ needs.parse.outputs.repo }}
+          ref: ${{ needs.parse.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-hack
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ferogram-cache-hack-session
+          save-if: false
+      - name: cargo hack test --feature-powerset -p ferogram-session
+        run: |
+          set +e
+          {
+            echo "### cargo hack test -p ferogram-session --feature-powerset ###"
+            cargo hack test -p ferogram-session --feature-powerset 2>&1
+            code=${PIPESTATUS[0]:-$?}
+            echo "exit code: $code"
+          } | tee build.log
+          exit 0
+      - name: Zip log
+        run: zip feature-powerset-session.log.zip build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: log-feature-powerset-session
+          path: build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: log-feature-powerset-session-zip
+          path: feature-powerset-session.log.zip
+
+  # Same idea, scoped to the workspace crate that actually ships the
+  # example/binary surface (ferogram) - catches feature-gated code
+  # (like `#[cfg(feature = "experimental")]` examples) that only ever
+  # gets compiled under one specific feature combination.
+  feature-powerset-ferogram:
+    needs: parse
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ needs.parse.outputs.repo }}
+          ref: ${{ needs.parse.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-hack
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ferogram-cache-hack-ferogram
+          save-if: false
+      - name: cargo hack test --feature-powerset -p ferogram --depth 2
+        run: |
+          set +e
+          {
+            echo "### cargo hack test -p ferogram --feature-powerset --depth 2 ###"
+            cargo hack test -p ferogram --feature-powerset --depth 2 2>&1
+            code=${PIPESTATUS[0]:-$?}
+            echo "exit code: $code"
+          } | tee build.log
+          exit 0
+      - name: Zip log
+        run: zip feature-powerset-ferogram.log.zip build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: log-feature-powerset-ferogram
+          path: build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: log-feature-powerset-ferogram-zip
+          path: feature-powerset-ferogram.log.zip
+
+  merge:
+    needs:
+      [
+        parse,
+        each-feature,
+        feature-powerset-session,
+        feature-powerset-ferogram,
+      ]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all logs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: log-*
+          path: logs
+
+      - name: Merge logs
+        run: |
+          echo "Feature-matrix log for ${{ needs.parse.outputs.repo }} @ ${{ needs.parse.outputs.sha }}" > build.log
+          echo "Started: $(date -u)" >> build.log
+          echo "======================================" >> build.log
+          for name in each-feature feature-powerset-session feature-powerset-ferogram; do
+            echo "" >> build.log
+            if [ -f "logs/log-$name/build.log" ]; then
+              cat "logs/log-$name/build.log" >> build.log
+            else
+              echo "### $name: no log produced (job did not run) ###" >> build.log
+            fi
+          done
+          echo "" >> build.log
+          echo "======================================" >> build.log
+          echo "Finished: $(date -u)" >> build.log
+
+      - name: Zip merged log
+        run: zip feature-matrix-log.zip build.log
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: feature-matrix-log
+          path: feature-matrix-log.zip
