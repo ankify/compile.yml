@@ -98,6 +98,41 @@ jobs:
           name: log-test-zip
           path: test.log.zip
 
+  test-default:
+    needs: parse
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ needs.parse.outputs.repo }}
+          ref: ${{ needs.parse.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ferogram-cache-default
+          save-if: false
+      - name: Run tests (default features)
+        run: |
+          set +e
+          {
+            echo "### cargo test --workspace ###"
+            cargo test --workspace 2>&1
+            code=${PIPESTATUS[0]:-$?}
+            echo "exit code: $code"
+          } | tee build.log
+          exit 0
+      - name: Zip log
+        run: zip test-default.log.zip build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: log-test-default
+          path: build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: log-test-default-zip
+          path: test-default.log.zip
+
   build-release:
     needs: parse
     runs-on: ubuntu-latest
@@ -427,6 +462,7 @@ jobs:
         parse,
         clippy,
         test,
+        test-default,
         build-release,
         build-debug,
         doc,
@@ -451,7 +487,7 @@ jobs:
           echo "Build log for ${{ needs.parse.outputs.repo }} @ ${{ needs.parse.outputs.sha }}" > build.log
           echo "Started: $(date -u)" >> build.log
           echo "======================================" >> build.log
-          for name in clippy test build-release build-debug doc publish tree-duplicates tree-features clippy-dead-code machete build-timings; do
+          for name in clippy test test-default build-release build-debug doc publish tree-duplicates tree-features clippy-dead-code machete build-timings; do
             echo "" >> build.log
             if [ -f "logs/log-$name/build.log" ]; then
               cat "logs/log-$name/build.log" >> build.log
