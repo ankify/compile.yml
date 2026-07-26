@@ -379,6 +379,48 @@ jobs:
           name: log-machete-zip
           path: machete.log.zip
 
+  build-timings:
+    needs: parse
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ needs.parse.outputs.repo }}
+          ref: ${{ needs.parse.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ferogram-cache
+          save-if: false
+      - name: Build with timings
+        run: |
+          set +e
+          {
+            echo "### cargo build --workspace --all-features --timings ###"
+            cargo build --workspace --all-features --timings 2>&1
+            code=${PIPESTATUS[0]:-$?}
+            echo "exit code: $code"
+          } | tee build.log
+          exit 0
+      - name: Zip log
+        run: zip build-timings.log.zip build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: log-build-timings
+          path: build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: log-build-timings-zip
+          path: build-timings.log.zip
+      - name: Upload timings HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-timings-report
+          path: target/cargo-timings/
+          if-no-files-found: ignore
+
   merge:
     needs:
       [
@@ -393,6 +435,7 @@ jobs:
         tree-features,
         clippy-dead-code,
         machete,
+        build-timings,
       ]
     if: always()
     runs-on: ubuntu-latest
@@ -408,7 +451,7 @@ jobs:
           echo "Build log for ${{ needs.parse.outputs.repo }} @ ${{ needs.parse.outputs.sha }}" > build.log
           echo "Started: $(date -u)" >> build.log
           echo "======================================" >> build.log
-          for name in clippy test build-release build-debug doc publish tree-duplicates tree-features clippy-dead-code machete; do
+          for name in clippy test build-release build-debug doc publish tree-duplicates tree-features clippy-dead-code machete build-timings; do
             echo "" >> build.log
             if [ -f "logs/log-$name/build.log" ]; then
               cat "logs/log-$name/build.log" >> build.log
