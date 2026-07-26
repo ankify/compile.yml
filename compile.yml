@@ -1,0 +1,111 @@
+name: Compile
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_url:
+        description: "Commit URL, e.g. https://github.com/owner/repo/commit/sha"
+        required: true
+        default: "https://github.com/ankit-chaubey/ferogram/commit/124ef3cc212a7ee1c153c8c5f8e94c10e2d20693"
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Parse commit URL
+        id: parse
+        run: |
+          url="${{ github.event.inputs.commit_url }}"
+          repo=$(echo "$url" | sed -E 's#https://github.com/([^/]+/[^/]+)/commit/.*#\1#')
+          sha=$(echo "$url" | sed -E 's#.*/commit/##')
+          echo "repo=$repo" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "Parsed repo: $repo"
+          echo "Parsed sha: $sha"
+
+      - name: Checkout commit
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.parse.outputs.repo }}
+          ref: ${{ steps.parse.outputs.sha }}
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Init log
+        run: |
+          echo "Build log for ${{ steps.parse.outputs.repo }} @ ${{ steps.parse.outputs.sha }}" > build.log
+          echo "Started: $(date -u)" >> build.log
+          echo "======================================" >> build.log
+
+      - name: Clippy
+        continue-on-error: true
+        run: |
+          echo "" >> build.log
+          echo "### cargo clippy --workspace --all-features ###" >> build.log
+          cargo clippy --workspace --all-features >> build.log 2>&1
+          echo "exit code: $?" >> build.log
+
+      - name: Test
+        continue-on-error: true
+        run: |
+          echo "" >> build.log
+          echo "### cargo test --workspace --all-features ###" >> build.log
+          cargo test --workspace --all-features >> build.log 2>&1
+          echo "exit code: $?" >> build.log
+
+      - name: Build release
+        continue-on-error: true
+        run: |
+          echo "" >> build.log
+          echo "### cargo build --workspace --release ###" >> build.log
+          cargo build --workspace --release >> build.log 2>&1
+          echo "exit code: $?" >> build.log
+
+      - name: Build debug
+        continue-on-error: true
+        run: |
+          echo "" >> build.log
+          echo "### cargo build --workspace ###" >> build.log
+          cargo build --workspace >> build.log 2>&1
+          echo "exit code: $?" >> build.log
+
+      - name: Doc
+        continue-on-error: true
+        run: |
+          echo "" >> build.log
+          echo "### cargo doc --workspace ###" >> build.log
+          cargo doc --workspace --no-deps >> build.log 2>&1
+          echo "exit code: $?" >> build.log
+
+      - name: Publish dry run
+        continue-on-error: true
+        run: |
+          echo "" >> build.log
+          echo "### cargo publish --dry-run ###" >> build.log
+          cargo publish --dry-run --allow-dirty >> build.log 2>&1
+          echo "exit code: $?" >> build.log
+
+      - name: Finish log
+        if: always()
+        run: |
+          echo "" >> build.log
+          echo "======================================" >> build.log
+          echo "Finished: $(date -u)" >> build.log
+
+      - name: Zip log
+        if: always()
+        run: zip build-log.zip build.log
+
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build-log.zip
